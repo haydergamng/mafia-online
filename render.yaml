@@ -1,0 +1,14 @@
+# Deploy this Node.js game server as a Render web service.
+# NOTE: room state lives in memory. Free instances spin down after inactivity,
+# so rooms are temporary and will reset after sleeping/redeploys.
+services:
+  - type: web
+    name: laylat-al-mafia
+    runtime: node
+    plan: free
+    buildCommand: npm install && npm test
+    startCommand: npm start
+    healthCheckPath: /health
+    envVars:
+      - key: NODE_ENV
+        value: production
