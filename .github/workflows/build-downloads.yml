@@ -1,4 +1,4 @@
-ذname: Build Mafia Online downloads
+name: Build Mafia Online downloads
 on:
   workflow_dispatch:
   push:
