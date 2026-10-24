@@ -1,13 +1,31 @@
 {
-  "name": "mafia-online-ar",
-  "version": "0.2.0",
+  "name": "laylat-al-mafia-desktop",
+  "version": "1.0.0",
   "private": true,
-  "description": "لعبة مافيا عربية جماعية بغرف أونلاين وشات وأدوار قابلة للتخصيص",
+  "main": "main.js",
+  "description": "Mafia Online Windows launcher",
   "scripts": {
-    "start": "node server.js",
-    "dev": "node --watch server.js",
-    "test": "node --test tests/*.test.js"
+    "build": "electron-builder --win portable --x64"
   },
-  "engines": { "node": ">=20" },
-  "dependencies": {}
+  "devDependencies": {
+    "electron": "^33.4.11",
+    "electron-builder": "^25.1.8"
+  },
+  "build": {
+    "appId": "com.haydergaming.mafia",
+    "productName": "Mafia Online",
+    "directories": {
+      "output": "dist"
+    },
+    "files": [
+      "main.js",
+      "package.json"
+    ],
+    "win": {
+      "target": [
+        "portable"
+      ]
+    },
+    "artifactName": "Mafia-Online-Windows-${version}.${ext}"
+  }
 }
