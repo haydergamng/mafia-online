@@ -1,0 +1,31 @@
+{
+  "name": "laylat-al-mafia-desktop",
+  "version": "1.0.0",
+  "private": true,
+  "main": "main.js",
+  "description": "Mafia Online Windows launcher",
+  "scripts": {
+    "build": "electron-builder --win portable --x64"
+  },
+  "devDependencies": {
+    "electron": "^33.4.11",
+    "electron-builder": "^25.1.8"
+  },
+  "build": {
+    "appId": "com.haydergaming.mafia",
+    "productName": "Mafia Online",
+    "directories": {
+      "output": "dist"
+    },
+    "files": [
+      "main.js",
+      "package.json"
+    ],
+    "win": {
+      "target": [
+        "portable"
+      ]
+    },
+    "artifactName": "Mafia-Online-Windows-${version}.${ext}"
+  }
+}
