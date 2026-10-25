@@ -3,6 +3,7 @@ const roles = {
   mafia:{label:'مافيا',emoji:'🕶️',description:'اختر أنت وفريق المافيا شخصًا في الليل. تحدثوا في الشات السري.'},
   doctor:{label:'طبيب',emoji:'🩺',description:'احمِ لاعبًا كل ليلة. إذا استهدفته المافيا فلن يخرج.'},
   detective:{label:'محقق',emoji:'🔎',description:'افحص لاعبًا كل ليلة لتعرف سرًا إذا كان من المافيا.'},
+  sniper:{label:'القنّاص',emoji:'🎯',description:'عندك طلقة واحدة طوال اللعبة. اختر وقت استخدامها ليلًا؛ الطبيب قد يحمي الهدف لكن الطلقة تستهلك.'},
   citizen:{label:'مواطن',emoji:'👤',description:'ناقش الآخرين في النهار وحاول كشف المافيا في التصويت.'}
 };
 let token=localStorage.getItem('mafia_token')||'';
@@ -63,14 +64,23 @@ function roleBlock(){
   if(state.phase==='lobby')return '';
   const role=roles[state.me.role];
   const text=state.me.alive?role.description:'خرجت من الجولة، وتقدر تتابع الأحداث بدون كتابة أو تصويت.';
+  const sniperStatus=state.me.role==='sniper'?`<div class="event">${state.me.sniperUsed?'🎯 استُخدمت بطاقتك الوحيدة. لن تعود حتى بداية لعبة جديدة.':'🎯 بطاقتك جاهزة: طلقة واحدة فقط؛ احتفظ بها لأي ليلة.'}</div>`:'';
   const investigation=state.me.investigation?`<div class="event">🔍 فحص الليلة ${state.me.investigation.round}: ${esc(state.me.investigation.name)} ${state.me.investigation.isMafia?'من المافيا 🕶️':'ليس من المافيا ✅'}</div>`:'';
-  return `<div class="myrole"><div class="role-em">${role.emoji}</div><div><h3>دورك السري: ${role.label}${state.me.alive?'':' • مستبعد'}</h3><p>${text}</p></div></div>${investigation}`;
+  return `<div class="myrole"><div class="role-em">${role.emoji}</div><div><h3>دورك السري: ${role.label}${state.me.alive?'':' • مستبعد'}</h3><p>${text}</p></div></div>${sniperStatus}${investigation}`;
 }
 function actionBlock(){
   if(!state.me.alive)return `<p class="status">تقدر تتابع اللعبة. انتظر نهاية الجولة.</p>`;
   const phase=state.phase;
   if(phase==='night'){
     if(state.me.role==='citizen')return `<p class="status">🌙 أنت مواطن، انتظر الصباح حتى تبدأ المناقشة.</p>`;
+    if(state.me.role==='sniper'){
+      if(state.me.sniperUsed)return `<p class="status">🎯 استخدمت طلقتك الوحيدة. تابع بقية الأدوار؛ لن تعود البطاقة حتى تبدأ لعبة جديدة.</p>`;
+      const candidates=state.players.filter(p=>p.alive&&p.id!==state.me.id);
+      return `<p class="status">🎯 عندك بطاقة واحدة فقط. تقدر تطلقها في أي ليلة أو تحتفظ بها.</p>
+        <div class="choice-list">${candidates.map(p=>`<button data-action="sniper-fire" data-target="${p.id}">🎯 استهداف ${esc(p.name)}</button>`).join('')}
+        <button class="skip" data-action="sniper-skip">احتفظ بالطلقة لهذه الليلة</button></div>
+        <p class="hint">بعد تأكيد إطلاقها تُستهلك البطاقة فورًا، حتى لو حمى الطبيب الهدف.</p>`;
+    }
     const candidates=state.players.filter(p=>p.alive&&(state.me.role!=='mafia'||!p.teammate)&&(state.me.role!=='detective'||p.id!==state.me.id));
     const prompt=state.me.role==='mafia'?'اختر هدف المافيا لليلة:':state.me.role==='doctor'?'اختر لاعبًا تحميه (تقدر تحمي نفسك):':'اختر لاعبًا للتحقيق في هويته:';
     return `<p class="status">${prompt}</p><div class="choice-list">${candidates.map(p=>`<button data-action="target" data-target="${p.id}" class="${state.me.nightTarget===p.id?'selected':''}">${esc(p.name)} ${state.me.nightTarget===p.id?'✓':''}</button>`).join('')}</div><p class="hint">اختيارك سري ويمكن تغييره حتى ينتهي الليل.</p>`;
@@ -144,6 +154,11 @@ $('game').addEventListener('click',async e=>{
     }
     if(action==='save-capacity'){await call('settings',{capacity:Number($('capacity-input').value)});return;}
     if(action==='start'){await call('start');toast('انطلقت الجولة! دورك يظهر لك وحدك.');return;}
+    if(action==='sniper-fire'){
+      if(!confirm('متأكد؟ بطاقتك الوحيدة ستنتهي بعد الإطلاق ولا يمكن التراجع.'))return;
+      await call('action',{targetId:element.dataset.target});toast('🎯 أُطلقت الطلقة! لن تعود البطاقة لهذه اللعبة.');return;
+    }
+    if(action==='sniper-skip'){await call('action',{targetId:'skip'});toast('احتفظت بالطلقة للجولة القادمة.');return;}
     if(action==='target'){await call('action',{targetId:element.dataset.target});toast('تم حفظ اختيارك بسرية.');return;}
     if(action==='skip-day'){await call('skip-day');return;}
     if(action==='restart'){await call('restart');return;}

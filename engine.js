@@ -1,7 +1,7 @@
 'use strict';
 const crypto = require('node:crypto');
-const TYPES = ['mafia', 'doctor', 'detective', 'citizen'];
-const roleLabels = {mafia:'مافيا',doctor:'طبيب',detective:'محقق',citizen:'مواطن'};
+const TYPES = ['mafia', 'doctor', 'detective', 'sniper', 'citizen'];
+const roleLabels = {mafia:'مافيا',doctor:'طبيب',detective:'محقق',sniper:'القنّاص',citizen:'مواطن'};
 
 function totalRoles(counts) {
   return TYPES.reduce((sum, role) => sum + counts[role], 0);

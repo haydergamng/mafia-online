@@ -39,7 +39,7 @@ function roomFor(token) {
   return {room,player};
 }
 function makePlayer(name) {
-  return { id:randomId(), name, role:null, alive:true, investigate:null, blocked:[], joinedAt:Date.now() };
+  return { id:randomId(), name, role:null, alive:true, investigate:null, sniperUsed:false, blocked:[], joinedAt:Date.now() };
 }
 function chat(room, channel, sender, text) {
   const messages = channel === 'mafia' ? room.mafiaChat : room.publicChat;
@@ -85,10 +85,21 @@ function resolveNight(room) {
   const eligible=room.players.filter(p=>p.alive&&p.role!=='mafia').map(p=>p.id);
   const mafiaTargetId=mostVoted(mafiaVotes,eligible,'random');
   const saved=new Set(room.players.filter(p=>p.alive&&p.role==='doctor').map(p=>room.nightActions[p.id]).filter(Boolean));
-  const target=room.players.find(p=>p.id===mafiaTargetId);
-  if(target&&!saved.has(target.id)){
-    target.alive=false;
-    announce(room,`☀️ حل الصباح، خرج ${target.name} من الجولة. دوره: ${roleLabels[target.role]}.`);
+  // جميع قرارات الليل تحدث معًا: حماية الطبيب تمنع استبعاد المافيا والقنّاص.
+  // الرصاصة تُستهلك عند اختيار هدفها، حتى لو كانت هناك حماية.
+  const hitIds=new Set();
+  if(mafiaTargetId)hitIds.add(mafiaTargetId);
+  for(const shooter of room.players.filter(p=>p.alive&&p.role==='sniper')){
+    const shot=room.nightActions[shooter.id];
+    if(shooter.sniperUsed && shot && shot!=='skip')hitIds.add(shot);
+  }
+  const removed=[];
+  for(const id of hitIds){
+    const p=room.players.find(p=>p.id===id&&p.alive);
+    if(p&&!saved.has(id)){p.alive=false;removed.push(p);}
+  }
+  if(removed.length){
+    announce(room,`☀️ حل الصباح، خرج من الجولة: ${removed.map(p=>`${p.name} (${roleLabels[p.role]})`).join('، ')}.`);
   } else announce(room,'☀️ حل الصباح، ولم يخرج أحد هذه الليلة.');
   if(checkWinner(room))return;
   setClock(room,'day',()=>beginVoting(room));
@@ -117,7 +128,7 @@ function view(room, player) {
     until:room.until, now:Date.now(), winner:room.winner,announcement:room.announcement,
     capacity:room.capacity,counts:{...room.counts},countTotal:totalRoles(room.counts),
     me:{id:player.id, name:player.name,role:player.role,alive:player.alive,
-      investigation:player.investigate,
+      investigation:player.investigate, sniperUsed:player.role==='sniper'?player.sniperUsed:null,
       nightTarget:room.nightActions[player.id]||null, vote:room.dayVotes[player.id]||null},
     players:room.players.map(p=>({id:p.id,name:p.name,alive:p.alive,
       role:room.phase==='finished'||(!p.alive&&room.phase!=='lobby')?p.role:null,
@@ -171,7 +182,7 @@ function action(pathname,body) {
     const name=safeName(body.name);if(!name)fail(400,'اكتب اسمًا من حرفين إلى 20 حرفًا.');
     const player=makePlayer(name),code=randCode(),token=randomToken();
     const room={code,hostId:player.id,phase:'lobby',round:0,capacity:6,
-      counts:{mafia:1,doctor:1,detective:1,citizen:0},players:[player],
+      counts:{mafia:1,doctor:1,detective:1,sniper:0,citizen:0},players:[player],
       nightActions:{},dayVotes:{},publicChat:[],mafiaChat:[],
       listeners:new Map(),announcement:'الغرفة جاهزة لاستقبال اللاعبين.',
       winner:null,until:null,clock:null,lastActivity:Date.now()};
@@ -204,7 +215,7 @@ function action(pathname,body) {
     if(room.phase!=='lobby')fail(409,'الجولة بدأت بالفعل.');
     if(room.players.length!==room.capacity)fail(400,'انتظر حتى يكتمل عدد اللاعبين المحدد.');
     const assigned=assignRoles(room.players.map(p=>p.id),room.counts);
-    for(const p of room.players){p.role=assigned.get(p.id);p.alive=true;p.investigate=null;}
+    for(const p of room.players){p.role=assigned.get(p.id);p.alive=true;p.investigate=null;p.sniperUsed=false;}
     room.round=0;room.publicChat=[];room.mafiaChat=[];room.winner=null;
     beginNight(room);return {started:true};
   }
@@ -212,14 +223,30 @@ function action(pathname,body) {
     if(!player.alive)fail(403,'اللاعب المستبعد لا يمكنه اختيار هدف.');
     const target=room.players.find(p=>p.id===body.targetId&&p.alive);
     if(room.phase==='night'){
-      if(!['mafia','doctor','detective'].includes(player.role))fail(403,'ليس لديك قرار ليلي.');
-      if(!target)fail(400,'اختر لاعبًا موجودًا.');
-      if(player.role==='mafia'&&target.role==='mafia')fail(400,'المافيا تختار شخصًا من خارج فريقها.');
-      if(player.role==='detective'&&target.id===player.id)fail(400,'لا يمكن للمحقق التحقيق في نفسه.');
-      room.nightActions[player.id]=target.id;
-      if(player.role==='detective')player.investigate={name:target.name,isMafia:target.role==='mafia',round:room.round};
+      if(!['mafia','doctor','detective','sniper'].includes(player.role))fail(403,'ليس لديك قرار ليلي.');
+      if(player.role==='sniper'){
+        if(player.sniperUsed)fail(409,'استخدمت طلقتك الوحيدة بالفعل؛ لا ترجع هذه الجولة.');
+        // يتاح تخطي هذه الليلة دون خسارة الرصاصة.
+        if(body.targetId==='skip')room.nightActions[player.id]='skip';
+        else {
+          if(!target||target.id===player.id)fail(400,'القنّاص يختار لاعبًا غير نفسه.');
+          room.nightActions[player.id]=target.id;
+          player.sniperUsed=true; // البطاقة تنتهي بمجرد إطلاقها ولا يمكن إلغاء الاختيار
+        }
+      } else {
+        if(!target)fail(400,'اختر لاعبًا موجودًا.');
+        if(player.role==='mafia'&&target.role==='mafia')fail(400,'المافيا تختار شخصًا من خارج فريقها.');
+        if(player.role==='detective'&&target.id===player.id)fail(400,'لا يمكن للمحقق التحقيق في نفسه.');
+        room.nightActions[player.id]=target.id;
+        if(player.role==='detective')player.investigate={name:target.name,isMafia:target.role==='mafia',round:room.round};
+      }
       broadcast(room);
-      const specials=room.players.filter(p=>p.alive&&['mafia','doctor','detective'].includes(p.role));
+      // القنّاص الذي لا يزال يحتفظ بالرصاصة يمكنه إطلاقها أو تخطي الليلة؛
+      // بعد إطلاقها لا ننتظر منه اختيارًا في الليالي التالية.
+      const specials=room.players.filter(p=>p.alive&&(
+        ['mafia','doctor','detective'].includes(p.role) ||
+        (p.role==='sniper' && !p.sniperUsed)
+      ));
       if(specials.every(p=>room.nightActions[p.id]))resolveNight(room);
       return {submitted:true};
     }
@@ -249,7 +276,7 @@ function action(pathname,body) {
   if(pathname==='/api/restart'){
     requireHost(room,player);if(room.phase!=='finished')fail(409,'لا يمكن إعادة اللعب قبل نهاية الجولة.');
     room.phase='lobby';room.round=0;room.until=null;room.winner=null;room.dayVotes={};room.nightActions={};room.publicChat=[];room.mafiaChat=[];
-    room.players.forEach(p=>{p.role=null;p.alive=true;p.investigate=null;});
+    room.players.forEach(p=>{p.role=null;p.alive=true;p.investigate=null;p.sniperUsed=false;});
     announce(room,'🎲 الغرفة جاهزة لجولة جديدة.');broadcast(room);return {restarted:true};
   }
   if(pathname==='/api/kick'){

@@ -1,6 +1,6 @@
 {
   "name": "mafia-online-ar",
-  "version": "0.2.0",
+  "version": "1.1.0",
   "private": true,
   "description": "لعبة مافيا عربية جماعية بغرف أونلاين وشات وأدوار قابلة للتخصيص",
   "scripts": {
@@ -8,6 +8,8 @@
     "dev": "node --watch server.js",
     "test": "node --test tests/*.test.js"
   },
-  "engines": { "node": ">=20" },
+  "engines": {
+    "node": ">=20"
+  },
   "dependencies": {}
 }

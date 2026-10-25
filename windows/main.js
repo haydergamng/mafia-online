@@ -1,7 +1,9 @@
 const {app,BrowserWindow,shell}=require('electron');
+const path=require('node:path');
 const URL='https://mafia-online-kfu6.onrender.com/';
+app.setName('ليلة المافيا');
 app.whenReady().then(()=>{
- const win=new BrowserWindow({width:1100,height:780,minWidth:420,minHeight:600,autoHideMenuBar:true,
+ const win=new BrowserWindow({title:'ليلة المافيا | Mafia Online',icon:path.join(__dirname,'icon.ico'),width:1100,height:780,minWidth:420,minHeight:600,autoHideMenuBar:true,
  webPreferences:{nodeIntegration:false,contextIsolation:true,sandbox:true}});
  win.loadURL(URL);
  win.webContents.setWindowOpenHandler(({url})=>{
