@@ -165,3 +165,56 @@ test('القنّاص يحتفظ بالطلقة ثم يستخدمها مرة وا
   assert.equal(after.me.sniperUsed,true);
   assert.equal(after.players.find(p=>p.id===players.mafia.id).alive,true);
 });
+
+test('الغرف العامة تظهر بالقائمة والغرف الخاصة مخفية ويمكن تغيير الخصوصية قبل اللعب',async t=>{
+  await new Promise(resolve=>server.listen(0,'127.0.0.1',resolve));
+  t.after(()=>new Promise(resolve=>server.close(resolve)));
+  const host=`http://127.0.0.1:${server.address().port}`;
+  async function post(route,body){
+    const r=await fetch(`${host}/api/${route}`,{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify(body)});
+    return {status:r.status,data:await r.json()};
+  }
+  const list=async()=>{
+    const r=await fetch(`${host}/api/rooms`);
+    assert.equal(r.status,200);
+    return (await r.json()).rooms;
+  };
+  const privateRoom=await post('create',{name:'خاصتي',visibility:'private',roomName:'غرفة أصدقائي'});
+  const publicRoom=await post('create',{name:'المضيف',visibility:'public',roomName:'ساحة المافيا'});
+  assert.equal(privateRoom.status,200);
+  assert.equal(publicRoom.status,200);
+  const privateCode=privateRoom.data.code;
+  const publicCode=publicRoom.data.code;
+  let shown=await list();
+  assert.equal(shown.some(r=>r.code===privateCode),false,'الغرف الخاصة لا تُفهرس');
+  assert.equal(shown.some(r=>r.code===publicCode),true);
+  assert.equal(shown.find(r=>r.code===publicCode).name,'ساحة المافيا');
+  assert.equal(shown.find(r=>r.code===publicCode).players,1);
+  assert.equal(shown.find(r=>r.code===publicCode).capacity,6);
+  assert.equal(shown[0].token,undefined,'لا تُسرب جلسات اللاعبين');
+  assert.equal(shown[0].players.length,undefined,'لا تُسرب بيانات اللاعبين الفردية');
+  let r=await post('settings',{token:privateRoom.data.token,visibility:'public'});
+  assert.equal(r.status,200);
+  assert.equal((await list()).some(room=>room.code===privateCode),true,'الغرفة الخاصة تصبح عامة عندما يغيّرها المضيف');
+  const guest=await post('join',{name:'ضيف عام',code:publicCode});
+  assert.equal(guest.status,200);
+  shown=await list();
+  assert.equal(shown.find(room=>room.code===publicCode).players,2);
+  r=await post('settings',{token:guest.data.token,visibility:'private'});
+  assert.equal(r.status,403,'لا يغيّر الخصوصية إلا المضيف');
+  r=await post('settings',{token:publicRoom.data.token,visibility:'private'});
+  assert.equal(r.status,200);
+  assert.equal((await list()).some(room=>room.code===publicCode),false);
+  r=await post('join',{name:'صديق بالرمز',code:publicCode});
+  assert.equal(r.status,200,'الغرف الخاصة لا تزال تسمح بالدخول باستخدام الرمز');
+  r=await post('settings',{token:publicRoom.data.token,visibility:'secret'});
+  assert.equal(r.status,400,'أنواع الغرف غير المعروفة ممنوعة');
+  r=await post('settings',{token:publicRoom.data.token,visibility:'public',capacity:3,counts:{mafia:1,doctor:1,detective:0,sniper:0,citizen:1}});
+  assert.equal(r.status,200);
+  assert.equal((await list()).find(room=>room.code===publicCode).full,true,'الغرفة الممتلئة معلّمة كممتلئة');
+  r=await post('start',{token:publicRoom.data.token});
+  assert.equal(r.status,200);
+  assert.equal((await list()).some(room=>room.code===publicCode),false,'الغرفة تختفي من قائمة الانتظار بعد بدء اللعبة');
+  r=await post('settings',{token:publicRoom.data.token,visibility:'private'});
+  assert.equal(r.status,409,'لا يغير المضيف خصوصية الغرفة أثناء اللعب');
+});

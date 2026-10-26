@@ -25,6 +25,21 @@ function safeName(s) {
   const clean = s.replace(/[\u0000-\u001f\u007f<>]/g,'').trim().slice(0,20);
   return clean.length >= 2 ? clean : null;
 }
+function safeRoomName(value, fallback) {
+  if(value === undefined || value === null || value === '') return fallback;
+  if(typeof value !== 'string') fail(400,'اسم الغرفة غير صالح.');
+  const clean=value.replace(/[\u0000-\u001f\u007f<>]/g,'').trim().slice(0,32);
+  if(clean.length<2)fail(400,'اسم الغرفة يجب أن يكون حرفين على الأقل.');
+  return clean;
+}
+function publicRooms() {
+  return [...rooms.values()]
+    .filter(room=>room.visibility==='public'&&room.phase==='lobby')
+    .sort((a,b)=>b.createdAt-a.createdAt)
+    .slice(0,80)
+    .map(room=>({code:room.code,name:room.name,host:room.players.find(p=>p.id===room.hostId)?.name||'المضيف',
+      players:room.players.length,capacity:room.capacity,full:room.players.length>=room.capacity}));
+}
 function sendJson(res, status, data) {
   const body = JSON.stringify(data);
   res.writeHead(status, {'Content-Type':'application/json; charset=utf-8','Content-Length':Buffer.byteLength(body), 'Cache-Control':'no-store', 'X-Content-Type-Options':'nosniff'});
@@ -124,7 +139,7 @@ function resolveVoting(room) {
 function view(room, player) {
   const good = player.role === 'mafia';
   return {
-    code:room.code,hostId:room.hostId,phase:room.phase,round:room.round,
+    code:room.code,roomName:room.name,visibility:room.visibility,hostId:room.hostId,phase:room.phase,round:room.round,
     until:room.until, now:Date.now(), winner:room.winner,announcement:room.announcement,
     capacity:room.capacity,counts:{...room.counts},countTotal:totalRoles(room.counts),
     me:{id:player.id, name:player.name,role:player.role,alive:player.alive,
@@ -180,8 +195,10 @@ function requireHost(room,p) {if(room.hostId!==p.id)fail(403,'هذا الإعد�
 function action(pathname,body) {
   if(pathname==='/api/create'){
     const name=safeName(body.name);if(!name)fail(400,'اكتب اسمًا من حرفين إلى 20 حرفًا.');
+    const visibility=body.visibility==='public'?'public':'private';
+    if(body.visibility!==undefined&&!['public','private'].includes(body.visibility))fail(400,'نوع الغرفة غير صالح.');
     const player=makePlayer(name),code=randCode(),token=randomToken();
-    const room={code,hostId:player.id,phase:'lobby',round:0,capacity:6,
+    const room={code,name:safeRoomName(body.roomName,`غرفة ${name}`),visibility,createdAt:Date.now(),hostId:player.id,phase:'lobby',round:0,capacity:6,
       counts:{mafia:1,doctor:1,detective:1,sniper:0,citizen:0},players:[player],
       nightActions:{},dayVotes:{},publicChat:[],mafiaChat:[],
       listeners:new Map(),announcement:'الغرفة جاهزة لاستقبال اللاعبين.',
@@ -208,7 +225,11 @@ function action(pathname,body) {
     const counts=body.counts===undefined?room.counts:body.counts;
     if(!rolesValid(counts,capacity))fail(400,'مجموع الأدوار لا يمكن أن يتجاوز عدد اللاعبين المحدد.');
     if(capacity<room.players.length)fail(400,'عدد المقاعد لا يمكن أن يقل عن الموجودين في الغرفة.');
-    room.capacity=capacity;room.counts={...counts};broadcast(room);return {capacity,counts};
+    if(body.visibility!==undefined&&!['public','private'].includes(body.visibility))fail(400,'نوع الغرفة غير صالح.');
+    const visibility=body.visibility===undefined?room.visibility:body.visibility;
+    const roomName=safeRoomName(body.roomName,room.name);
+    room.capacity=capacity;room.counts={...counts};room.visibility=visibility;room.name=roomName;
+    broadcast(room);return {capacity,counts,visibility,roomName};
   }
   if(pathname==='/api/start'){
     requireHost(room,player);
@@ -308,6 +329,7 @@ const server=http.createServer(async(req,res)=>{
   try {
     const url=new URL(req.url,'http://localhost');
     if(req.method==='GET'&&url.pathname==='/health')return sendJson(res,200,{ok:true});
+    if(req.method==='GET'&&url.pathname==='/api/rooms')return sendJson(res,200,{rooms:publicRooms()});
     if(req.method==='GET'&&url.pathname==='/api/state'){
       const {room,player}=roomFor(url.searchParams.get('token'));
       return sendJson(res,200,view(room,player));
