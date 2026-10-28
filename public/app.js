@@ -68,6 +68,7 @@ function ruleToggle(name,label,help,editable=true) {
     ${isHost&&editable?`<button data-action="toggle-rule" data-rule="${name}" class="toggle-button ${enabled?'enabled':''}" aria-pressed="${enabled}">${enabled?'مفعّل ✓':'مقفّل ✕'}</button>`:`<span class="tag ${enabled?'green':''}">${enabled?'مفعّل':'مقفّل'}</span>`}</div>`;
 }
 function settingsBlock(){
+  if(state.phase!=='lobby')return '';
   const isHost=state.hostId===state.me.id;
   const isLobby=state.phase==='lobby';
   const full=state.countTotal>=state.capacity;

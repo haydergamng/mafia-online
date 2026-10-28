@@ -12,6 +12,16 @@ const maxBodyBytes = 8192;
 const seconds = { night: 75, day: 120, voting: 70 };
 const charset = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
 const defaultRules = Object.freeze({textChat:true, voiceChat:false, revealRoles:true});
+// Optional TURN relay. Without it the app still tries direct connections via free STUN.
+// Configure TURN_URLS, TURN_USERNAME and TURN_CREDENTIAL together in Render if needed.
+function voiceIceConfig() {
+  const iceServers=[{urls:['stun:stun.l.google.com:19302','stun:stun1.l.google.com:19302']}];
+  const urls=(process.env.TURN_URLS||'').split(',').map(x=>x.trim()).filter(x=>/^turns?:/i.test(x));
+  const username=process.env.TURN_USERNAME||'';
+  const credential=process.env.TURN_CREDENTIAL||'';
+  if(urls.length&&username&&credential)iceServers.push({urls,username,credential});
+  return {iceServers,hasTurn:iceServers.length>1};
+}
 
 function randCode() {
   let code;
@@ -393,6 +403,12 @@ const server=http.createServer(async(req,res)=>{
     const url=new URL(req.url,'http://localhost');
     if(req.method==='GET'&&url.pathname==='/health')return sendJson(res,200,{ok:true});
     if(req.method==='GET'&&url.pathname==='/api/rooms')return sendJson(res,200,{rooms:publicRooms()});
+    if(req.method==='GET'&&url.pathname==='/api/voice-config') {
+      // Only an authenticated room participant receives temporary voice configuration.
+      const {room}=roomFor(url.searchParams.get('token'));
+      if(!room.rules.voiceChat)fail(403,'الشات الصوتي مقفّل.');
+      return sendJson(res,200,{ok:true,...voiceIceConfig()});
+    }
     if(req.method==='GET'&&url.pathname==='/api/state'){
       const {room,player}=roomFor(url.searchParams.get('token'));
       return sendJson(res,200,view(room,player));

@@ -7,6 +7,23 @@ const VoiceChat=(()=>{
   let currentRoom=null;
   const connections=new Map();
   let boundStream=null;
+  let iceServers=[{urls:['stun:stun.l.google.com:19302','stun:stun1.l.google.com:19302']}];
+  let hasTurn=false;
+  let audioBlocked=false;
+  let lastError='';
+  function connectionCounts(){
+    const peers=[...connections.values()];
+    return {connected:peers.filter(p=>p.pc.connectionState==='connected').length,
+      trying:peers.filter(p=>['new','connecting'].includes(p.pc.connectionState)).length,
+      failed:peers.filter(p=>['failed','disconnected'].includes(p.pc.connectionState)).length};
+  }
+  async function getIceConfig(){
+    const response=await fetch(`/api/voice-config?token=${encodeURIComponent(token)}`,{cache:'no-store'});
+    if(!response.ok)throw Error('تعذر تحميل إعدادات الاتصال.');
+    const data=await response.json();
+    if(!Array.isArray(data.iceServers)||!data.iceServers.length)throw Error('إعدادات الصوت غير صالحة.');
+    iceServers=data.iceServers;hasTurn=!!data.hasTurn;
+  }
 
   function canListen(){return !!(state?.rules?.voiceChat&&state?.voice?.channel);}
   function canSpeak(){return !!(canListen()&&state.voice.canSpeak);}
@@ -24,7 +41,7 @@ const VoiceChat=(()=>{
     for(const item of connections.values())try{await item.sender.replaceTrack(null);}catch{}
     old?.getTracks().forEach(t=>t.stop());
   }
-  function stop(){joined=false;clearPeers();stopMic();currentChannel=null;currentRoom=null;refresh();}
+  function stop(){joined=false;clearPeers();stopMic();currentChannel=null;currentRoom=null;lastError='';audioBlocked=false;refresh();}
   function reset(){stop();}
   async function send(id,signal){
     if(!joined||!canListen())return;
@@ -33,7 +50,7 @@ const VoiceChat=(()=>{
   function peerConnection(peer){
     if(connections.has(peer.id))return connections.get(peer.id);
     if(typeof RTCPeerConnection==='undefined')return null;
-    const pc=new RTCPeerConnection({iceServers:[{urls:'stun:stun.l.google.com:19302'}]});
+    const pc=new RTCPeerConnection({iceServers});
     // Spectators are receive-only at the WebRTC transport level too.
     const transceiver=pc.addTransceiver('audio',{direction:canSpeak()?'sendrecv':'recvonly'});
     const item={pc,sender:transceiver.sender,audio:null,candidates:[],speaker:peer.speaker};
@@ -48,11 +65,19 @@ const VoiceChat=(()=>{
       audio.dataset.voicePlayer=peer.id;
       audio.srcObject=e.streams[0]||new MediaStream([e.track]);
       document.getElementById('voice-audios')?.append(audio);
-      audio.play().catch(()=>{});
+      audio.play().then(()=>{audioBlocked=false;refresh();}).catch(()=>{
+        audioBlocked=true;
+        lastError='المتصفح منع تشغيل صوت اللاعبين تلقائيًا. اضغط «تشغيل السماعة».';
+        refresh();
+      });
       item.audio?.remove();item.audio=audio;
     };
     pc.onconnectionstatechange=()=>{
-      if(pc.connectionState==='failed'||pc.connectionState==='closed')closePeer(peer.id);
+      if(pc.connectionState==='failed'){
+        lastError=hasTurn?'فشل الاتصال. جرّب «إعادة اتصال الصوت».':'فشل الاتصال المباشر. جرّب «إعادة اتصال الصوت»؛ قد تحتاج شبكتكم إلى TURN.';
+      }
+      if(pc.connectionState==='connected')lastError='';
+      refresh();
     };
     pc.onnegotiationneeded=async()=>{
       // A deterministic offerer prevents simultaneous offers.
@@ -78,7 +103,7 @@ const VoiceChat=(()=>{
       clearPeers();currentRoom=next.code;currentChannel=next.voice.channel;
     }
     if(!joined||!canListen()){
-      clearPeers();
+      clearPeers();lastError='';
       if(talking())stopMic();
       refresh();return;
     }
@@ -131,9 +156,11 @@ const VoiceChat=(()=>{
     }
     if(typeof RTCPeerConnection==='undefined'){toast('هذا الجهاز لا يدعم الاتصال الصوتي WebRTC.');return;}
     try{
+      await getIceConfig();
       await call('voice-presence',{joined:true});
-      joined=true;sync(state);refresh();toast('🔊 دخلت الشات الصوتي. المايك مغلق حتى تشغّله.');
-    }catch(e){toast(e.message);}
+      joined=true;lastError='';sync(state);refresh();
+      toast('🔊 دخلت الشات الصوتي. لتسمع أحدًا، لازم يدخل الصوت هو أيضًا.');
+    }catch(e){lastError=e.message;toast(e.message);refresh();}
   }
   async function toggleMic(){
     if(!joined||!canSpeak()){toast('الميكروفون غير متاح لك الآن.');return;}
@@ -146,21 +173,49 @@ const VoiceChat=(()=>{
       refresh();toast('🎤 المايك يعمل الآن.');
     }catch(e){toast('تعذر فتح المايك. تأكد من الأذونات على الجهاز.');}
   }
+  async function retry(){
+    if(!joined||!canListen())return;
+    clearPeers();lastError='';
+    try{await getIceConfig();sync(state);toast('نعيد الاتصال الصوتي باللاعبين...');}
+    catch(e){lastError=e.message;toast(e.message);}
+    refresh();
+  }
+  async function unlockAudio(){
+    const audios=[...document.querySelectorAll('#voice-audios audio')];
+    let errors=0;
+    for(const el of audios)try{await el.play();}catch{errors++;}
+    audioBlocked=errors>0;
+    if(audioBlocked)toast('الصوت محظور من إعدادات المتصفح. تحقق من السماعة والإذن.');
+    else{lastError='';toast('🔊 السماعة جاهزة.');}
+    refresh();
+  }
   function ui(){
     if(!state)return '';
     const available=canListen();
     const label=state.voice?.channel==='mafia-night'?'🌙 شات المافيا':'☀️ الشات العام';
     const listening=joined&&available;
+    const counts=connectionCounts();
+    const status=listening?(counts.connected?`🟢 متصل صوتيًا مع ${counts.connected} لاعب`:counts.trying?'🟡 جاري توصيل الصوت...':state.voice.peers.length?'🔴 لم يكتمل اتصال الصوت':'بانتظار دخول لاعب آخر إلى الشات الصوتي'):'لم تدخل القناة الصوتية بعد';
     return `<section id="voice-widget" class="card voice-widget">
       <h3 class="section-title">🎙️ الشات الصوتي <span class="tag ${available?'green':''}">${available?'متاح':'غير متاح'}</span></h3>
       <p class="status">${!state.rules.voiceChat?'المضيف قفل الشات الصوتي.':state.phase==='lobby'?'يفتح الشات الصوتي بعد بدء اللعبة.':!available?'أنت لاعب حي خارج المافيا؛ الصوت مغلق في الليل.':state.me.alive?label:'👻 متفرج: تسمع الجميع نهارًا والمافيا ليلًا، دون الكلام.'}</p>
       ${available?`<div class="voice-buttons"><button class="${listening?'danger':'secondary'}" data-action="voice-listen">${listening?'🔇 مغادرة الصوت':'🔊 دخول الصوت'}</button><button class="${talking()?'primary':'subtle'}" data-action="voice-mic" ${!listening||!canSpeak()?'disabled':''}>${talking()?'🎤 كتم المايك':'🎙️ فتح المايك'}</button></div>`:''}
-      ${available&&listening?`<p class="hint">داخل القناة الصوتية · ${state.voice.peers.length} مستمع/متحدث آخر. ${canSpeak()?'المايك مغلق افتراضيًا.':'وضع الاستماع فقط.'}</p>`:''}
+      ${available&&listening?`<p class="hint">${status} · ${state.voice.peers.length} داخل القناة. ${canSpeak()?'شغّل المايك للتحدث.':'وضع الاستماع فقط.'}</p>`:''}
+      ${listening&&audioBlocked?`<button class="secondary" data-action="voice-unlock">🔈 تشغيل السماعة</button>`:''}
+      ${listening&&state.voice.peers.length&&counts.connected<state.voice.peers.length?`<button class="subtle" data-action="voice-retry">🔄 إعادة اتصال الصوت</button>`:''}
+      ${listening&&lastError?`<p class="hint" role="status">⚠️ ${lastError}</p>`:''}
       <p class="hint">الدخول الصوتي اختياري. تقدر تغادر أو تكتم المايك بأي وقت. في الغرف العامة لا تشارك معلوماتك الشخصية.</p>
     </section>`;
   }
-  return {sync,reset,bind,toggleListen,toggleMic,ui};
+  return {sync,reset,bind,toggleListen,toggleMic,retry,unlockAudio,ui};
 })();
 // Top-level const does not become a window property in classic browser scripts.
 window.VoiceChat=VoiceChat;
+// Handle only new voice diagnostics here; existing app.js stays untouched.
+document.addEventListener('click',event=>{
+  const button=event.target.closest?.('[data-action]');
+  if(!button||button.disabled)return;
+  if(button.dataset.action==='voice-retry')VoiceChat.retry();
+  if(button.dataset.action==='voice-unlock')VoiceChat.unlockAudio();
+});
 if(stream)VoiceChat.bind(stream);
