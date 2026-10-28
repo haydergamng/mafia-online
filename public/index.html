@@ -15,7 +15,7 @@
   <div class="ambient"></div>
   <header class="topbar">
     <div class="brand"><span class="brand-symbol">◈</span><span>لَيْلَة <strong>المافيا</strong></span></div>
-    <span class="top-label">لعبة اجتماعية أونلاين · v1.2</span>
+    <span class="top-label">لعبة اجتماعية أونلاين · v1.3</span>
   </header>
   <main class="container">
     <section id="welcome" class="welcome">
@@ -44,12 +44,14 @@
         <div id="public-rooms-list" class="public-rooms-list" aria-live="polite"><p class="empty-text">جاري تحميل الغرف...</p></div>
         <p class="hint">الغرف الخاصة ما تظهر هنا. التحديث تلقائي كل 10 ثوانٍ.</p>
       </section>
-      <div class="feature-row"><span>🔒 أدوار سرية</span><span>💬 شات كتابي</span><span>🎭 أدوار مرنة</span></div>
-      <p class="fine">التواصل الصوتي اختياري عبر ديسكورد خارج اللعبة. هذه نسخة تجريبية.</p>
+      <div class="feature-row"><span>🔒 أدوار سرية</span><span>🎙️ شات اختياري</span><span>🎭 أدوار مرنة</span></div>
+      <p class="fine">يمكن للمضيف التحكم بالشات الكتابي والصوتي من إعدادات الغرفة. هذه نسخة تجريبية.</p>
     </section>
     <section id="game" hidden></section>
   </main>
+  <div id="voice-audios" aria-hidden="true"></div>
   <div id="toast" class="toast" role="status" aria-live="polite"></div>
   <script src="/app.js" defer></script>
+  <script src="/voice.js" defer></script>
 </body>
 </html>

@@ -26,3 +26,21 @@
 .room-privacy strong{color:var(--gold2)}
 .room-privacy .hint{margin:3px 0 0}
 @media(max-width:440px){.public-room-item{align-items:stretch;flex-direction:column}.public-room-item button{width:100%}.room-privacy{align-items:stretch;flex-direction:column}.room-privacy button{width:100%}}
+
+/* v1.3: unified room settings and optional in-game voice */
+.settings-panel{margin-top:14px}
+.settings-panel summary{cursor:pointer;list-style:none;padding:1px 0}
+.settings-panel summary::-webkit-details-marker{display:none}
+.settings-panel summary:after{content:'⌄';font-size:22px;color:var(--gold)}
+.settings-panel[open] summary:after{content:'⌃'}
+.settings-subtitle{font-size:15px;color:var(--gold2);margin:22px 0 7px}
+.setting-row{padding:14px 0;border-bottom:1px solid var(--line);display:flex;gap:13px;align-items:center;justify-content:space-between}
+.setting-row strong{font-size:14px}
+.setting-row .hint{margin:4px 0 0}
+.toggle-button{background:#473940;color:#f6d9df;border:1px solid #72545c;border-radius:12px;padding:10px 13px;min-width:96px;font-weight:800;flex-shrink:0}
+.toggle-button.enabled{background:#294536;color:#c5f3d6;border-color:#4e9270}
+.voice-widget{margin-top:16px}
+.voice-buttons{display:flex;gap:8px;flex-wrap:wrap;margin:13px 0}
+.voice-buttons button{flex:1;min-width:130px}
+#voice-audios{position:absolute;width:0;height:0;overflow:hidden}
+@media(max-width:440px){.setting-row{align-items:flex-start}.setting-row .hint{font-size:11px}.toggle-button{min-width:80px}}

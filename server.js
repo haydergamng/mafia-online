@@ -11,6 +11,7 @@ const sessions = new Map();
 const maxBodyBytes = 8192;
 const seconds = { night: 75, day: 120, voting: 70 };
 const charset = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
+const defaultRules = Object.freeze({textChat:true, voiceChat:false, revealRoles:true});
 
 function randCode() {
   let code;
@@ -54,7 +55,7 @@ function roomFor(token) {
   return {room,player};
 }
 function makePlayer(name) {
-  return { id:randomId(), name, role:null, alive:true, investigate:null, sniperUsed:false, blocked:[], joinedAt:Date.now() };
+  return { id:randomId(), name, role:null, alive:true, investigate:null, sniperUsed:false, voiceJoined:false, blocked:[], joinedAt:Date.now() };
 }
 function chat(room, channel, sender, text) {
   const messages = channel === 'mafia' ? room.mafiaChat : room.publicChat;
@@ -62,6 +63,30 @@ function chat(room, channel, sender, text) {
   if (messages.length>150) messages.splice(0,messages.length-150);
 }
 function announce(room, text) {room.announcement=text;chat(room,'public',null,text);}
+function eliminationText(room, p) {
+  return `${p.name}${room.rules.revealRoles ? ` (${roleLabels[p.role]})` : ''}`;
+}
+function voiceChannel(room, player) {
+  if (!room.rules.voiceChat) return null;
+  if (room.phase==='day'||room.phase==='voting') return 'day';
+  if (room.phase==='night'&&(!player.alive||player.role==='mafia')) return 'mafia-night';
+  return null;
+}
+function voiceCanSpeak(room, player) {
+  return player.alive && (room.phase==='day'||room.phase==='voting'||(room.phase==='night'&&player.role==='mafia'));
+}
+function voicePeers(room, player) {
+  const mode=voiceChannel(room,player);
+  if(!mode)return [];
+  return room.players.filter(p=>p.id!==player.id&&p.voiceJoined&&voiceChannel(room,p)===mode)
+    .map(p=>({id:p.id,name:p.name,speaker:voiceCanSpeak(room,p)}));
+}
+function emitSignal(room, recipient, sender, signal) {
+  const data={from:sender.id,signal};
+  for(const res of room.listeners.get(recipient.id)||[]) {
+    if(!res.writableEnded&&!res.destroyed)res.write(`event: signal\ndata: ${JSON.stringify(data)}\n\n`);
+  }
+}
 function clearClock(room) {if(room.clock) clearTimeout(room.clock); room.clock=null;}
 function setClock(room,phase,callback) {
   clearClock(room);
@@ -114,7 +139,7 @@ function resolveNight(room) {
     if(p&&!saved.has(id)){p.alive=false;removed.push(p);}
   }
   if(removed.length){
-    announce(room,`☀️ حل الصباح، خرج من الجولة: ${removed.map(p=>`${p.name} (${roleLabels[p.role]})`).join('، ')}.`);
+    announce(room,`☀️ حل الصباح، خرج من الجولة: ${removed.map(p=>eliminationText(room,p)).join('، ')}.`);
   } else announce(room,'☀️ حل الصباح، ولم يخرج أحد هذه الليلة.');
   if(checkWinner(room))return;
   setClock(room,'day',()=>beginVoting(room));
@@ -131,7 +156,7 @@ function resolveVoting(room) {
   const alive=room.players.filter(p=>p.alive).map(p=>p.id);
   const voted=mostVoted(room.dayVotes,alive);
   const removed=room.players.find(p=>p.id===voted);
-  if(removed){removed.alive=false;announce(room,`📣 نتيجة التصويت: خرج ${removed.name}. دوره: ${roleLabels[removed.role]}.`);}
+  if(removed){removed.alive=false;announce(room,`📣 نتيجة التصويت: خرج ${eliminationText(room,removed)}.`);}
   else announce(room,'📣 انتهى التصويت بتعادل أو بدون أصوات كافية؛ لم يخرج أحد.');
   if(checkWinner(room))return;
   beginNight(room);
@@ -141,12 +166,15 @@ function view(room, player) {
   return {
     code:room.code,roomName:room.name,visibility:room.visibility,hostId:room.hostId,phase:room.phase,round:room.round,
     until:room.until, now:Date.now(), winner:room.winner,announcement:room.announcement,
-    capacity:room.capacity,counts:{...room.counts},countTotal:totalRoles(room.counts),
+    capacity:room.capacity,counts:{...room.counts},countTotal:totalRoles(room.counts),rules:{...room.rules},
+    voice:{channel:voiceChannel(room,player),canSpeak:voiceCanSpeak(room,player),joined:!!player.voiceJoined,peers:voicePeers(room,player)},
     me:{id:player.id, name:player.name,role:player.role,alive:player.alive,
       investigation:player.investigate, sniperUsed:player.role==='sniper'?player.sniperUsed:null,
       nightTarget:room.nightActions[player.id]||null, vote:room.dayVotes[player.id]||null},
     players:room.players.map(p=>({id:p.id,name:p.name,alive:p.alive,
-      role:room.phase==='finished'||(!p.alive&&room.phase!=='lobby')?p.role:null,
+      role:room.phase==='finished'||
+        (room.rules.revealRoles&&!p.alive&&room.phase!=='lobby')||
+        (!player.alive&&room.phase==='night'&&p.role==='mafia')?p.role:null,
       teammate:good && p.role==='mafia',host:p.id===room.hostId})),
     publicChat:room.publicChat.filter(msg=>!player.blocked.includes(msg.senderId)),
     mafiaChat:good?room.mafiaChat.filter(msg=>!player.blocked.includes(msg.senderId)):[]
@@ -175,6 +203,7 @@ function dropPlayer(room,p) {
     room.listeners.delete(p.id);
   } else {
     p.alive=false;
+    p.voiceJoined=false;
     announce(room,`غادر ${p.name} الغرفة.`);
   }
   if(room.hostId===p.id)room.hostId=room.players.find(x=>x.id!==p.id&&x.alive)?.id||room.players.find(x=>x.id!==p.id)?.id||null;
@@ -199,7 +228,7 @@ function action(pathname,body) {
     if(body.visibility!==undefined&&!['public','private'].includes(body.visibility))fail(400,'نوع الغرفة غير صالح.');
     const player=makePlayer(name),code=randCode(),token=randomToken();
     const room={code,name:safeRoomName(body.roomName,`غرفة ${name}`),visibility,createdAt:Date.now(),hostId:player.id,phase:'lobby',round:0,capacity:6,
-      counts:{mafia:1,doctor:1,detective:1,sniper:0,citizen:0},players:[player],
+      counts:{mafia:1,doctor:1,detective:1,sniper:0,citizen:0},rules:{...defaultRules},players:[player],
       nightActions:{},dayVotes:{},publicChat:[],mafiaChat:[],
       listeners:new Map(),announcement:'الغرفة جاهزة لاستقبال اللاعبين.',
       winner:null,until:null,clock:null,lastActivity:Date.now()};
@@ -220,16 +249,28 @@ function action(pathname,body) {
   const {room,player}=roomFor(body.token);
   if(pathname==='/api/settings'){
     requireHost(room,player);
-    if(room.phase!=='lobby')fail(409,'يمكن تعديل الأدوار في الانتظار فقط.');
-    const capacity=body.capacity===undefined?room.capacity:Number(body.capacity);
-    const counts=body.counts===undefined?room.counts:body.counts;
-    if(!rolesValid(counts,capacity))fail(400,'مجموع الأدوار لا يمكن أن يتجاوز عدد اللاعبين المحدد.');
-    if(capacity<room.players.length)fail(400,'عدد المقاعد لا يمكن أن يقل عن الموجودين في الغرفة.');
-    if(body.visibility!==undefined&&!['public','private'].includes(body.visibility))fail(400,'نوع الغرفة غير صالح.');
-    const visibility=body.visibility===undefined?room.visibility:body.visibility;
-    const roomName=safeRoomName(body.roomName,room.name);
-    room.capacity=capacity;room.counts={...counts};room.visibility=visibility;room.name=roomName;
-    broadcast(room);return {capacity,counts,visibility,roomName};
+    const isLobby=room.phase==='lobby';
+    if(!isLobby && ['capacity','counts','visibility','roomName','revealRoles'].some(k=>body[k]!==undefined))
+      fail(409,'تعديل نوع الغرفة والأدوار وكشف الأدوار متاح قبل بدء الجولة فقط.');
+    const rules={...room.rules};
+    for(const name of Object.keys(defaultRules)) {
+      if(body[name]!==undefined) {
+        if(typeof body[name]!=='boolean')fail(400,'قيمة الإعداد يجب أن تكون تشغيلًا أو إيقافًا.');
+        rules[name]=body[name];
+      }
+    }
+    if(isLobby){
+      const capacity=body.capacity===undefined?room.capacity:Number(body.capacity);
+      const counts=body.counts===undefined?room.counts:body.counts;
+      if(!rolesValid(counts,capacity))fail(400,'مجموع الأدوار لا يمكن أن يتجاوز عدد اللاعبين المحدد.');
+      if(capacity<room.players.length)fail(400,'عدد المقاعد لا يمكن أن يقل عن الموجودين في الغرفة.');
+      if(body.visibility!==undefined&&!['public','private'].includes(body.visibility))fail(400,'نوع الغرفة غير صالح.');
+      room.capacity=capacity;room.counts={...counts};room.visibility=body.visibility??room.visibility;
+      room.name=safeRoomName(body.roomName,room.name);
+    }
+    room.rules=rules;
+    if(!rules.voiceChat)room.players.forEach(p=>{p.voiceJoined=false;});
+    broadcast(room);return {rules:{...rules},capacity:room.capacity,counts:room.counts,visibility:room.visibility,roomName:room.name};
   }
   if(pathname==='/api/start'){
     requireHost(room,player);
@@ -281,6 +322,7 @@ function action(pathname,body) {
     fail(400,'هذا القرار غير متاح في المرحلة الحالية.');
   }
   if(pathname==='/api/chat'){
+    if(!room.rules.textChat)fail(403,'الشات الكتابي مقفّل من إعدادات الغرفة.');
     if(!player.alive)fail(403,'يمكن للمستبعد متابعة اللعبة لكن ليس الكتابة.');
     const channel=body.channel==='mafia'?'mafia':'public';
     if(channel==='public'&&!['day','voting'].includes(room.phase))fail(403,'الشات العام يفتح في النهار والتصويت.');
@@ -290,12 +332,33 @@ function action(pathname,body) {
     if(Date.now()-(player.lastChatAt||0)<850)fail(429,'انتظر لحظة قبل إرسال رسالة ثانية.');
     player.lastChatAt=Date.now();chat(room,channel,player,msg);broadcast(room);return {sent:true};
   }
+  if(pathname==='/api/voice-presence'){
+    if(typeof body.joined!=='boolean')fail(400,'حدد تشغيل أو إيقاف الاستماع الصوتي.');
+    if(body.joined && !room.rules.voiceChat)fail(403,'الشات الصوتي مقفّل من إعدادات الغرفة.');
+    if(body.joined && room.phase==='lobby')fail(409,'الصوت يبدأ بعد انطلاق الجولة.');
+    player.voiceJoined=body.joined;
+    broadcast(room);return {joined:player.voiceJoined};
+  }
+  if(pathname==='/api/voice-signal'){
+    if(!room.rules.voiceChat||!player.voiceJoined||!voiceChannel(room,player))fail(403,'الاتصال الصوتي غير مسموح حاليًا.');
+    const target=room.players.find(p=>p.id===body.targetId);
+    if(!target||target.id===player.id||!target.voiceJoined||voiceChannel(room,target)!==voiceChannel(room,player))
+      fail(403,'هذا اللاعب ليس في القناة الصوتية نفسها.');
+    const signal=body.signal;
+    if(!signal||typeof signal!=='object'||!['offer','answer','candidate'].includes(signal.type))fail(400,'رسالة صوتية غير صالحة.');
+    if(signal.type==='candidate'){
+      if(!signal.candidate||typeof signal.candidate.candidate!=='string'||signal.candidate.candidate.length>3000)fail(400,'بيانات الاتصال غير صالحة.');
+    }else if(typeof signal.sdp!=='string'||signal.sdp.length>6500)fail(400,'بيانات الصوت غير صالحة.');
+    emitSignal(room,target,player,signal);
+    return {sent:true};
+  }
   if(pathname==='/api/skip-day'){
     requireHost(room,player);if(room.phase!=='day')fail(409,'نقاش النهار غير نشط.');
     beginVoting(room);return {ok:true};
   }
   if(pathname==='/api/restart'){
     requireHost(room,player);if(room.phase!=='finished')fail(409,'لا يمكن إعادة اللعب قبل نهاية الجولة.');
+    room.players.forEach(p=>{p.voiceJoined=false;});
     room.phase='lobby';room.round=0;room.until=null;room.winner=null;room.dayVotes={};room.nightActions={};room.publicChat=[];room.mafiaChat=[];
     room.players.forEach(p=>{p.role=null;p.alive=true;p.investigate=null;p.sniperUsed=false;});
     announce(room,'🎲 الغرفة جاهزة لجولة جديدة.');broadcast(room);return {restarted:true};
