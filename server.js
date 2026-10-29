@@ -298,11 +298,14 @@ function action(pathname,body) {
       } else {
         if(!target)fail(400,'اختر لاعبًا موجودًا.');
         if(player.role==='mafia'&&target.role==='mafia')fail(400,'المافيا تختار شخصًا من خارج فريقها.');
-        // التحقيق مرة واحدة في الليلة. لا نسمح بإعادة الاختيار حتى عبر API مباشرة؛
-        // وإلا يستطيع المحقق تجربة أسماء الجميع وكشف فريق المافيا في ليلة واحدة.
-        if(player.role==='detective'&&room.nightActions[player.id])fail(409,'حققت مع لاعب واحد هذه الليلة. تقدر تحقق مرة ثانية في الليلة القادمة.');
         if(player.role==='detective'&&target.id===player.id)fail(400,'لا يمكن للمحقق التحقيق في نفسه.');
-        room.nightActions[player.id]=target.id;
+        if(player.role==='mafia'){
+          const mafia=room.players.filter(p=>p.alive&&p.role==='mafia');
+          const chosen=mafia.map(p=>room.nightActions[p.id]).find(Boolean);
+          if(chosen&&chosen!==target.id)fail(409,'المافيا لها هدف واحد مشترك، وقد تم اختيار هدف آخر لهذه الليلة.');
+          // أول عضو يختار يثبت هدف المافيا المشترك، ولا يمكن تغييره هذه الليلة.
+          for(const member of mafia)room.nightActions[member.id]=target.id;
+        } else room.nightActions[player.id]=target.id;
         if(player.role==='detective')player.investigate={name:target.name,isMafia:target.role==='mafia',round:room.round};
       }
       broadcast(room);
@@ -379,75 +382,4 @@ function action(pathname,body) {
     if(!item||item.system||item.senderId===player.id)fail(400,'لا يمكن الإبلاغ عن هذه الرسالة.');
     // البلاغات محلية ومؤقتة؛ يلزم نظام إشراف ومراجعة حقيقي قبل الإطلاق العام.
     if(!room.reports)room.reports=[];
-    if(!room.reports.some(r=>r.messageId===item.id&&r.reporterId===player.id))room.reports.push({messageId:item.id,reporterId:player.id,at:Date.now()});
-    return {reported:true};
-  }
-  if(pathname==='/api/block'){
-    const target=room.players.find(p=>p.id===body.playerId);
-    if(!target||target.id===player.id)fail(400,'لا يمكن حظر هذا اللاعب.');
-    if(!player.blocked.includes(target.id))player.blocked.push(target.id);
-    broadcast(room);return {blocked:true};
-  }
-  fail(404,'العنوان غير موجود.');
-}
-const mime = {'.html':'text/html; charset=utf-8','.js':'text/javascript; charset=utf-8','.css':'text/css; charset=utf-8','.png':'image/png','.svg':'image/svg+xml'};
-const server=http.createServer(async(req,res)=>{
-  try {
-    const url=new URL(req.url,'http://localhost');
-    if(req.method==='GET'&&url.pathname==='/health')return sendJson(res,200,{ok:true});
-    if(req.method==='GET'&&url.pathname==='/api/rooms')return sendJson(res,200,{rooms:publicRooms()});
-    if(req.method==='GET'&&url.pathname==='/api/state'){
-      const {room,player}=roomFor(url.searchParams.get('token'));
-      return sendJson(res,200,view(room,player));
-    }
-    if(req.method==='GET'&&url.pathname==='/api/events'){
-      const {room,player}=roomFor(url.searchParams.get('token'));
-      res.writeHead(200,{'Content-Type':'text/event-stream; charset=utf-8','Cache-Control':'no-cache, no-transform','Connection':'keep-alive','X-Accel-Buffering':'no','X-Content-Type-Options':'nosniff'});
-      res.write(': connected\n\n');
-      if(!room.listeners.has(player.id))room.listeners.set(player.id,new Set());
-      room.listeners.get(player.id).add(res);
-      emit(res,view(room,player));
-      const pulse=setInterval(()=>{if(!res.writableEnded)res.write(': pulse\n\n');},25_000);
-      req.on('close',()=>{clearInterval(pulse);room.listeners.get(player.id)?.delete(res);});
-      return;
-    }
-    if(req.method==='POST'&&url.pathname.startsWith('/api/')){
-      // Same-origin guard for browser-based clients.
-      const origin=req.headers.origin;
-      if(origin&&new URL(origin).host!==req.headers.host)fail(403,'الطلب من مصدر غير مسموح.');
-      const body=await readBody(req);
-      const data=action(url.pathname,body);
-      return sendJson(res,200,{ok:true,...data});
-    }
-    if(req.method!=='GET')fail(405,'الطريقة غير مدعومة.');
-    const filename=url.pathname==='/'?'index.html':url.pathname.slice(1);
-    const full=path.resolve(PUBLIC,filename);
-    if(!full.startsWith(PUBLIC+path.sep)&&full!==path.join(PUBLIC,'index.html'))fail(404,'الملف غير موجود.');
-    const ext=path.extname(full);
-    if(!mime[ext])fail(404,'الملف غير موجود.');
-    const stream=fs.createReadStream(full);
-    stream.on('error',()=>{if(!res.headersSent)sendJson(res,404,{error:'الملف غير موجود.'});else res.end();});
-    res.setHeader('Content-Type',mime[ext]);res.setHeader('X-Content-Type-Options','nosniff');
-    res.setHeader('Referrer-Policy','no-referrer');
-    stream.pipe(res);
-  } catch(err) {
-    if(!res.headersSent)sendJson(res,err.status||500,{ok:false,error:err.status?err.message:'حدث خطأ بالخادم.'});
-    else res.end();
-    if(!err.status)console.error(err);
-  }
-});
-const garbage=setInterval(()=>{
-  const expired=Date.now()-2*60*60*1000;
-  for(const [code,room] of rooms){
-    if(room.lastActivity<expired&&![...room.listeners.values()].some(s=>s.size)){
-      clearClock(room);rooms.delete(code);
-      for(const [token,s] of sessions)if(s.code===code)sessions.delete(token);
-    }
-  }
-},5*60_000);
-garbage.unref();
-if(require.main===module) {
-  const port=Number(process.env.PORT)||3000;
-  server.listen(port,'0.0.0.0',()=>console.log(`MAFIA Online: http://localhost:${server.address().port}`));
-}
-module.exports={server,rooms,sessions};
+    if(!room.reports.some(r=>r.messageId===item.id&
