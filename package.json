@@ -1,6 +1,6 @@
 {
   "name": "mafia-online-ar",
-  "version": "1.3.0",
+  "version": "1.4.0",
   "private": true,
   "description": "لعبة مافيا عربية جماعية بغرف أونلاين وشات وأدوار قابلة للتخصيص",
   "scripts": {

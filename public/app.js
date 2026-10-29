@@ -119,11 +119,19 @@ function actionBlock(){
       return `<p class="status">🎯 عندك بطاقة واحدة فقط. تقدر تطلقها في أي ليلة أو تحتفظ بها.</p>
         <div class="choice-list">${candidates.map(p=>`<button data-action="sniper-fire" data-target="${p.id}">🎯 استهداف ${esc(p.name)}</button>`).join('')}
         <button class="skip" data-action="sniper-skip">احتفظ بالطلقة لهذه الليلة</button></div>
-        <p class="hint">بعد تأكيد إطلاقها تُستهلك البطاقة فورًا، حتى لو حمى الطبيب الهدف.</p>`;
+        <p class="hint">إذا تبي تستخدم الرصاصة، اختر قبل ما تكتمل قرارات المافيا والطبيب والمحقق؛ وقتها يبدأ النهار تلقائيًا. الطلقة تُستهلك فورًا حتى لو حمى الطبيب الهدف.</p>`;
     }
     const candidates=state.players.filter(p=>p.alive&&(state.me.role!=='mafia'||!p.teammate)&&(state.me.role!=='detective'||p.id!==state.me.id));
-    const prompt=state.me.role==='mafia'?'اختر هدف المافيا لليلة:':state.me.role==='doctor'?'اختر لاعبًا تحميه (تقدر تحمي نفسك):':'اختر لاعبًا للتحقيق في هويته:';
-    return `<p class="status">${prompt}</p><div class="choice-list">${candidates.map(p=>`<button data-action="target" data-target="${p.id}" class="${state.me.nightTarget===p.id?'selected':''}">${esc(p.name)} ${state.me.nightTarget===p.id?'✓':''}</button>`).join('')}</div><p class="hint">اختيارك سري ويمكن تغييره حتى ينتهي الليل.</p>`;
+    if(state.me.role==='mafia'){
+      const locked=state.mafiaTarget;
+      const selected=candidates.find(p=>p.id===locked);
+      if(state.me.nightTarget)return `<p class="status">✅ أكدت هدف فريق المافيا: <strong>${selected?esc(selected.name):'الهدف المحدد'}</strong>. انتظر بقية أعضاء الفريق.</p>`;
+      if(locked)return `<p class="status">🕶️ اختار فريق المافيا <strong>${selected?esc(selected.name):'الهدف المحدد'}</strong>. لازم تؤكد نفس الهدف.</p><div class="choice-list"><button data-action="target" data-target="${locked}">✅ تأكيد استهداف ${selected?esc(selected.name):'الهدف'}</button></div><p class="hint">هدف واحد مشترك لكل المافيا، ولا يمكن اختيار شخص مختلف.</p>`;
+      return `<p class="status">اختر هدفًا واحدًا لفريق المافيا لليلة:</p><div class="choice-list">${candidates.map(p=>`<button data-action="target" data-target="${p.id}">${esc(p.name)}</button>`).join('')}</div><p class="hint">أول اختيار يثبت هدف الفريق، وباقي المافيا يؤكدون نفس الشخص.</p>`;
+    }
+    if(state.me.role==='detective'&&state.me.nightTarget)return `<p class="status">✅ خلصت تحقيقك لهذه الليلة. انتظر الصباح.</p>`;
+    const prompt=state.me.role==='doctor'?'اختر لاعبًا تحميه (تقدر تحمي نفسك):':'اختر لاعبًا للتحقيق في هويته:';
+    return `<p class="status">${prompt}</p><div class="choice-list">${candidates.map(p=>`<button data-action="target" data-target="${p.id}" class="${state.me.nightTarget===p.id?'selected':''}">${esc(p.name)} ${state.me.nightTarget===p.id?'✓':''}</button>`).join('')}</div><p class="hint">${state.me.role==='doctor'?'يمكن تغيير الحماية قبل انتهاء الليل.':'يمكن التحقيق مع لاعب واحد فقط في كل ليلة.'}</p>`;
   }
   if(phase==='voting')return `<p class="status">🗳️ من تتوقع أنه مافيا؟ لا يمكنك التصويت لنفسك.</p><div class="choice-list">${state.players.filter(p=>p.alive&&p.id!==state.me.id).map(p=>`<button data-action="target" data-target="${p.id}" class="${state.me.vote===p.id?'selected':''}">${esc(p.name)}</button>`).join('')}<button class="skip ${state.me.vote==='skip'?'selected':''}" data-action="target" data-target="skip">تخطي التصويت</button></div><p class="hint">عند تصويت الجميع تُحسب النتيجة تلقائيًا.</p>`;
   if(phase==='day')return `<p class="status">☀️ ناقش اللاعبين في الشات العام وحاول تكشف المافيا.</p>${state.me.id===state.hostId?`<button class="subtle" data-action="skip-day">🗳️ الانتقال للتصويت الآن</button>`:''}`;
@@ -149,7 +157,7 @@ function render(){
   const active=document.activeElement?.id||null;
   const selected=active&&$(active)?.selectionStart;
   const isLobby=state.phase==='lobby';
-  $('game').innerHTML=`${roomHeader()}${statusCard()}<div class="columns"><div>${isLobby?'':`<section class="card"><h3 class="section-title">🎭 دورك وقراراتك</h3>${roleBlock()}${actionBlock()}</section>`}${settingsBlock()}</div><div>${playersBlock()}${!isLobby?`${window.VoiceChat?.ui()||''}${chatBlock()}`:`<div class="card chat-card"><p class="status">🎙️ يتحكم المضيف بالصوت والشات من إعدادات الغرفة. يبدأ الصوت بعد انطلاق الجولة.</p></div>`}</div></div><div class="footer-controls"><span class="fine">نسخة تجريبية • الغرف مؤقتة وتختفي إذا أُعيد تشغيل الخادم</span></div>`;
+  $('game').innerHTML=`${roomHeader()}${statusCard()}<div class="columns"><div>${isLobby?'':`<section class="card"><h3 class="section-title">🎭 دورك وقراراتك</h3>${roleBlock()}${actionBlock()}</section>`}${settingsBlock()}</div><div>${playersBlock()}${!isLobby?`${window.VoiceChat?.ui()||''}${chatBlock()}`:`<div class="card chat-card"><p class="status">🎙️ يتحكم المضيف بالصوت والشات من إعدادات الغرفة. يبدأ الصوت بعد انطلاق الجولة.</p></div>`}</div></div><div class="footer-controls"><span class="fine">المنشئ: حيدر المرهون • المساعد: عبدالله احجيرات<br>الإصدار v1.4 • نسخة تجريبية • الغرف مؤقتة وتختفي إذا أُعيد تشغيل الخادم</span></div>`;
   if(active&&$(active)&&!$(active).disabled){$(active).focus();if(typeof selected==='number'&&$(active).setSelectionRange)try{$(active).setSelectionRange(selected,selected);}catch{}}
   const log=$('chat-log');if(log)log.scrollTop=log.scrollHeight;
   tick();

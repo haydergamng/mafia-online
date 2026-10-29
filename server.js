@@ -12,6 +12,16 @@ const maxBodyBytes = 8192;
 const seconds = { night: 75, day: 120, voting: 70 };
 const charset = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
 const defaultRules = Object.freeze({textChat:true, voiceChat:false, revealRoles:true});
+// Optional TURN relay. Without it the app still tries direct connections via free STUN.
+// Configure TURN_URLS, TURN_USERNAME and TURN_CREDENTIAL together in Render if needed.
+function voiceIceConfig() {
+  const iceServers=[{urls:['stun:stun.l.google.com:19302','stun:stun1.l.google.com:19302']}];
+  const urls=(process.env.TURN_URLS||'').split(',').map(x=>x.trim()).filter(x=>/^turns?:/i.test(x));
+  const username=process.env.TURN_USERNAME||'';
+  const credential=process.env.TURN_CREDENTIAL||'';
+  if(urls.length&&username&&credential)iceServers.push({urls,username,credential});
+  return {iceServers,hasTurn:iceServers.length>1};
+}
 
 function randCode() {
   let code;
@@ -107,9 +117,21 @@ function checkWinner(room) {
   if(side){finish(room,side);return true;}
   return false;
 }
+// First mafia choice becomes the shared target for that night.
+// Confirmations from other mafia members must match it; a split target is never allowed.
+function sharedMafiaTarget(room) {
+  return room.mafiaTarget || null;
+}
+function nightRequiredActionsComplete(room) {
+  // The sniper is optional and can shoot before the other active roles finish.
+  // Once all alive mafia, doctors and detectives have acted, dawn starts immediately.
+  return room.players.filter(p=>p.alive && ['mafia','doctor','detective'].includes(p.role))
+    .every(p=>Boolean(room.nightActions[p.id]));
+}
 function beginNight(room) {
   room.round++;
   room.nightActions={};
+  room.mafiaTarget=null;
   for(const player of room.players) player.investigate=null;
   chat(room,'mafia',null,`🌙 الليلة ${room.round}: اختاروا هدفكم بسرية.`);
   announce(room,`🌙 بدأت الليلة ${room.round}. ينتظر الجميع حتى الصباح.`);
@@ -118,12 +140,8 @@ function beginNight(room) {
 function resolveNight(room) {
   if(room.phase!=='night')return;
   clearClock(room);
-  const mafiaVotes={};
-  for(const p of room.players.filter(p=>p.alive&&p.role==='mafia')) {
-    if(room.nightActions[p.id]) mafiaVotes[p.id]=room.nightActions[p.id];
-  }
-  const eligible=room.players.filter(p=>p.alive&&p.role!=='mafia').map(p=>p.id);
-  const mafiaTargetId=mostVoted(mafiaVotes,eligible,'random');
+  // No tie-break randomness: all mafia confirmations refer to exactly one target.
+  const mafiaTargetId=sharedMafiaTarget(room);
   const saved=new Set(room.players.filter(p=>p.alive&&p.role==='doctor').map(p=>room.nightActions[p.id]).filter(Boolean));
   // جميع قرارات الليل تحدث معًا: حماية الطبيب تمنع استبعاد المافيا والقنّاص.
   // الرصاصة تُستهلك عند اختيار هدفها، حتى لو كانت هناك حماية.
@@ -168,6 +186,7 @@ function view(room, player) {
     until:room.until, now:Date.now(), winner:room.winner,announcement:room.announcement,
     capacity:room.capacity,counts:{...room.counts},countTotal:totalRoles(room.counts),rules:{...room.rules},
     voice:{channel:voiceChannel(room,player),canSpeak:voiceCanSpeak(room,player),joined:!!player.voiceJoined,peers:voicePeers(room,player)},
+    mafiaTarget:room.phase==='night' && player.alive && player.role==='mafia' ? sharedMafiaTarget(room) : null,
     me:{id:player.id, name:player.name,role:player.role,alive:player.alive,
       investigation:player.investigate, sniperUsed:player.role==='sniper'?player.sniperUsed:null,
       nightTarget:room.nightActions[player.id]||null, vote:room.dayVotes[player.id]||null},
@@ -298,21 +317,19 @@ function action(pathname,body) {
       } else {
         if(!target)fail(400,'اختر لاعبًا موجودًا.');
         if(player.role==='mafia'&&target.role==='mafia')fail(400,'المافيا تختار شخصًا من خارج فريقها.');
-        // التحقيق مرة واحدة في الليلة. لا نسمح بإعادة الاختيار حتى عبر API مباشرة؛
-        // وإلا يستطيع المحقق تجربة أسماء الجميع وكشف فريق المافيا في ليلة واحدة.
+        if(player.role==='mafia'&&room.nightActions[player.id])fail(409,'تم تأكيد اختيارك لهذه الليلة. لا يمكن تغييره.');
+        if(player.role==='mafia'&&sharedMafiaTarget(room)&&sharedMafiaTarget(room)!==target.id)
+          fail(409,'اختار فريق المافيا هدفًا آخر. لازم تؤكدون نفس الشخص.');
+        // التحقيق مرة واحدة في الليلة: منع إعادة الفحص لكشف هوية عدة لاعبين.
         if(player.role==='detective'&&room.nightActions[player.id])fail(409,'حققت مع لاعب واحد هذه الليلة. تقدر تحقق مرة ثانية في الليلة القادمة.');
         if(player.role==='detective'&&target.id===player.id)fail(400,'لا يمكن للمحقق التحقيق في نفسه.');
+        if(player.role==='mafia'&&!room.mafiaTarget)room.mafiaTarget=target.id;
         room.nightActions[player.id]=target.id;
         if(player.role==='detective')player.investigate={name:target.name,isMafia:target.role==='mafia',round:room.round};
       }
       broadcast(room);
-      // القنّاص الذي لا يزال يحتفظ بالرصاصة يمكنه إطلاقها أو تخطي الليلة؛
-      // بعد إطلاقها لا ننتظر منه اختيارًا في الليالي التالية.
-      const specials=room.players.filter(p=>p.alive&&(
-        ['mafia','doctor','detective'].includes(p.role) ||
-        (p.role==='sniper' && !p.sniperUsed)
-      ));
-      if(specials.every(p=>room.nightActions[p.id]))resolveNight(room);
+      // The sniper may act first or hold their shot; don't delay dawn for them.
+      if(nightRequiredActionsComplete(room))resolveNight(room);
       return {submitted:true};
     }
     if(room.phase==='voting'){
@@ -396,6 +413,12 @@ const server=http.createServer(async(req,res)=>{
     const url=new URL(req.url,'http://localhost');
     if(req.method==='GET'&&url.pathname==='/health')return sendJson(res,200,{ok:true});
     if(req.method==='GET'&&url.pathname==='/api/rooms')return sendJson(res,200,{rooms:publicRooms()});
+    if(req.method==='GET'&&url.pathname==='/api/voice-config') {
+      // Only an authenticated room participant receives temporary voice configuration.
+      const {room}=roomFor(url.searchParams.get('token'));
+      if(!room.rules.voiceChat)fail(403,'الشات الصوتي مقفّل.');
+      return sendJson(res,200,{ok:true,...voiceIceConfig()});
+    }
     if(req.method==='GET'&&url.pathname==='/api/state'){
       const {room,player}=roomFor(url.searchParams.get('token'));
       return sendJson(res,200,view(room,player));
