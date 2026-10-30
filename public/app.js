@@ -126,7 +126,7 @@ function actionBlock(){
       const locked=state.mafiaTarget;
       const selected=candidates.find(p=>p.id===locked);
       if(state.me.nightTarget)return `<p class="status">✅ أكدت هدف فريق المافيا: <strong>${selected?esc(selected.name):'الهدف المحدد'}</strong>. انتظر بقية أعضاء الفريق.</p>`;
-      if(locked)return `<p class="status">🕶️ اختار فريق المافيا <strong>${selected?esc(selected.name):'الهدف المحدد'}</strong>. لازم تؤكد نفس الهدف.</p><div class="choice-list"><button data-action="target" data-target="${locked}">✅ تأكيد استهداف ${selected?esc(selected.name):'الهدف'}</button></div><p class="hint">هدف واحد مشترك لكل المافيا، ولا يمكن اختيار شخص مختلف.</p>`;
+      if(locked)return `<p class="status">🕶️ اقترح فريق المافيا استهداف <strong>${selected?esc(selected.name):'الهدف المحدد'}</strong>. توافق؟</p><div class="choice-list"><button data-action="target" data-target="${locked}">✅ تأكيد استهداف ${selected?esc(selected.name):'الهدف'}</button><button class="subtle" data-action="mafia-reject">❌ رفض الهدف واختيار غيره</button></div><p class="hint">إذا رفضت، يُلغى الهدف وتأكيدات الفريق السابقة، وتختارون هدفًا جديدًا معًا.</p>`;
       return `<p class="status">اختر هدفًا واحدًا لفريق المافيا لليلة:</p><div class="choice-list">${candidates.map(p=>`<button data-action="target" data-target="${p.id}">${esc(p.name)}</button>`).join('')}</div><p class="hint">أول اختيار يثبت هدف الفريق، وباقي المافيا يؤكدون نفس الشخص.</p>`;
     }
     if(state.me.role==='detective'&&state.me.nightTarget)return `<p class="status">✅ خلصت تحقيقك لهذه الليلة. انتظر الصباح.</p>`;
@@ -225,6 +225,7 @@ $('game').addEventListener('click',async e=>{
       await call('action',{targetId:element.dataset.target});toast('🎯 أُطلقت الطلقة! لن تعود البطاقة لهذه اللعبة.');return;
     }
     if(action==='sniper-skip'){await call('action',{targetId:'skip'});toast('احتفظت بالطلقة للجولة القادمة.');return;}
+    if(action==='mafia-reject'){await call('mafia-reject');toast('تم رفض الهدف. اختاروا هدفًا جديدًا.');return;}
     if(action==='target'){await call('action',{targetId:element.dataset.target});toast('تم حفظ اختيارك بسرية.');return;}
     if(action==='skip-day'){await call('skip-day');return;}
     if(action==='restart'){settingsExpanded=true;await call('restart');return;}

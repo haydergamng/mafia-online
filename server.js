@@ -300,6 +300,16 @@ function action(pathname,body) {
     room.round=0;room.publicChat=[];room.mafiaChat=[];room.winner=null;
     beginNight(room);return {started:true};
   }
+  if(pathname==='/api/mafia-reject'){
+    if(room.phase!=='night'||!player.alive||player.role!=='mafia')fail(403,'الرفض متاح للمافيا الأحياء في الليل فقط.');
+    if(!room.mafiaTarget)fail(409,'ما فيه هدف مقترح حاليًا.');
+    if(room.nightActions[player.id])fail(409,'أنت أكدت الهدف بالفعل، وما تقدر ترفضه.');
+    room.mafiaTarget=null;
+    for(const teammate of room.players.filter(p=>p.alive&&p.role==='mafia'))delete room.nightActions[teammate.id];
+    chat(room,'mafia',null,'❌ رفض أحد أعضاء المافيا الهدف المقترح. اختاروا هدفًا جديدًا.');
+    broadcast(room);
+    return {rejected:true};
+  }
   if(pathname==='/api/action'){
     if(!player.alive)fail(403,'اللاعب المستبعد لا يمكنه اختيار هدف.');
     const target=room.players.find(p=>p.id===body.targetId&&p.alive);
